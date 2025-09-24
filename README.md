@@ -21,14 +21,21 @@ Mocktopus solves these problems by providing a local mock server that perfectly 
 
 ## Features
 
-✅ **Drop-in replacement** - Just change your base URL
-✅ **Deterministic responses** - Same input → same output
-✅ **Tool/function calling** - Full support for complex workflows
-✅ **Streaming** - Server-sent events (SSE) support
-✅ **Multiple providers** - OpenAI and Anthropic compatible
-✅ **Zero cost** - No API charges for tests
-✅ **Fast** - No network latency
-✅ **Offline** - Run tests without internet
+### 🔄 **Drop-in Replacement**
+Just change your base URL - no code changes required
+
+### 🎯 **Deterministic Testing**
+Same input always produces the same output - perfect for CI/CD
+
+### 🛠️ **Advanced LLM Features**
+- **Tool/function calling** - Full support for complex workflows
+- **Streaming responses** - Server-sent events (SSE) support
+- **Multiple providers** - OpenAI and Anthropic compatible
+
+### ⚡ **Developer Experience**
+- **Zero cost** - No API charges for tests
+- **Fast execution** - No network latency
+- **Offline testing** - Run tests without internet connection
 
 ## Installation
 
