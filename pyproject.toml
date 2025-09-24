@@ -23,6 +23,9 @@ Homepage = "https://github.com/evalops/mocktopus"
 [project.scripts]
 mocktopus = "mocktopus.cli:main"
 
+[project.entry-points.pytest11]
+mocktopus = "mocktopus.pytest_plugin"
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/mocktopus"]
 
