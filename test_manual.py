@@ -50,6 +50,7 @@ def test_error_scenarios():
     scenario.add_rule(Rule(
         type="llm.openai",
         when={"messages_contains": "error"},
+        respond={},  # Empty respond dict
         error={
             "error_type": "rate_limit",
             "message": "Rate limit exceeded",
