@@ -1,0 +1,78 @@
+version: 1
+meta:
+  description: Function/tool calling example for weather, search, and calculations
+  author: Mocktopus
+
+rules:
+  # Weather function call
+  - type: llm.openai
+    when:
+      model: "gpt-4*"
+      messages_regex: "weather|temperature|forecast"
+    respond:
+      content: null
+      tool_calls:
+        - id: "call_weather_123"
+          type: "function"
+          function:
+            name: "get_current_weather"
+            arguments: '{"location": "San Francisco, CA", "unit": "fahrenheit"}'
+      usage:
+        input_tokens: 20
+        output_tokens: 35
+
+  # Web search function call
+  - type: llm.openai
+    when:
+      model: "*"
+      messages_regex: "search|look up|find information"
+    respond:
+      content: null
+      tool_calls:
+        - id: "call_search_456"
+          type: "function"
+          function:
+            name: "web_search"
+            arguments: '{"query": "latest news", "max_results": 5}'
+      usage:
+        input_tokens: 15
+        output_tokens: 28
+
+  # Calculator function call
+  - type: llm.openai
+    when:
+      model: "*"
+      messages_regex: "calculate|compute"
+    respond:
+      content: null
+      tool_calls:
+        - id: "call_calc_789"
+          type: "function"
+          function:
+            name: "calculator"
+            arguments: '{"expression": "2 + 2"}'
+      usage:
+        input_tokens: 12
+        output_tokens: 20
+
+  # Multiple tool calls
+  - type: llm.openai
+    when:
+      model: "gpt-4*"
+      messages_contains: "weather and news"
+    respond:
+      content: null
+      tool_calls:
+        - id: "call_multi_001"
+          type: "function"
+          function:
+            name: "get_current_weather"
+            arguments: '{"location": "New York"}'
+        - id: "call_multi_002"
+          type: "function"
+          function:
+            name: "web_search"
+            arguments: '{"query": "New York news today"}'
+      usage:
+        input_tokens: 25
+        output_tokens: 50

@@ -1,0 +1,99 @@
+version: 1
+meta:
+  description: Deterministic responses for evaluation testing
+  author: Mocktopus
+  use_case: LLM app evaluation and testing
+
+rules:
+  # Classification task - always returns same label
+  - type: llm.openai
+    when:
+      model: "*"
+      messages_regex: "classify|sentiment|category"
+    respond:
+      content: |
+        {
+          "classification": "positive",
+          "confidence": 0.95,
+          "reasoning": "The text contains positive indicators"
+        }
+      usage:
+        input_tokens: 50
+        output_tokens: 25
+
+  # Entity extraction - consistent format
+  - type: llm.openai
+    when:
+      model: "*"
+      messages_regex: "extract|entities|names"
+    respond:
+      content: |
+        {
+          "entities": [
+            {"type": "PERSON", "value": "John Doe"},
+            {"type": "ORG", "value": "Acme Corp"},
+            {"type": "DATE", "value": "2024-01-15"}
+          ]
+        }
+      usage:
+        input_tokens: 40
+        output_tokens: 35
+
+  # Summarization - fixed length response
+  - type: llm.openai
+    when:
+      model: "*"
+      messages_contains: "summarize"
+    respond:
+      content: "This document discusses the main points of the subject matter, highlighting key findings and recommendations for future action."
+      usage:
+        input_tokens: 100
+        output_tokens: 20
+
+  # Q&A - deterministic answer
+  - type: llm.openai
+    when:
+      model: "*"
+      messages_regex: "capital of"
+    respond:
+      content: "The capital is Washington, D.C."
+      usage:
+        input_tokens: 15
+        output_tokens: 8
+
+  # Code generation - always same implementation
+  - type: llm.openai
+    when:
+      model: "*"
+      messages_regex: "fibonacci|fib sequence"
+    respond:
+      content: |
+        ```python
+        def fibonacci(n):
+            if n <= 0:
+                return []
+            elif n == 1:
+                return [0]
+            elif n == 2:
+                return [0, 1]
+            else:
+                fib = [0, 1]
+                for i in range(2, n):
+                    fib.append(fib[i-1] + fib[i-2])
+                return fib
+        ```
+      usage:
+        input_tokens: 20
+        output_tokens: 80
+
+  # Limited use rule - only responds 3 times
+  - type: llm.openai
+    when:
+      model: "*"
+      messages_contains: "limited"
+    times: 3
+    respond:
+      content: "This response is limited to 3 uses"
+      usage:
+        input_tokens: 10
+        output_tokens: 8

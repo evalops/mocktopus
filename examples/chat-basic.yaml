@@ -1,0 +1,37 @@
+version: 1
+meta:
+  description: Basic chat completions example
+  author: Mocktopus
+
+rules:
+  # Basic greeting response
+  - type: llm.openai
+    when:
+      model: "*"
+      messages_contains: "hello"
+    respond:
+      content: "Hello! How can I assist you today?"
+      usage:
+        input_tokens: 5
+        output_tokens: 8
+
+  # Math question
+  - type: llm.openai
+    when:
+      model: "*"
+      messages_regex: "\\d+\\s*\\+\\s*\\d+"
+    respond:
+      content: "To solve this math problem, I would need to calculate the sum of the numbers you provided."
+      usage:
+        input_tokens: 10
+        output_tokens: 15
+
+  # Default fallback
+  - type: llm.openai
+    when:
+      model: "*"
+    respond:
+      content: "I understand your request. Let me help you with that."
+      usage:
+        input_tokens: 8
+        output_tokens: 12
