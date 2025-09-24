@@ -94,6 +94,270 @@ class MockServer:
         elif self.mode == ServerMode.REPLAY:
             return await self._handle_replay_openai(data, stream)
 
+    # OpenAI Embeddings Handler
+    async def handle_openai_embeddings(self, request: Request) -> Response:
+        """Handle /v1/embeddings endpoint (OpenAI-compatible)"""
+
+        try:
+            data = await request.json()
+        except Exception as e:
+            return web.json_response(
+                {"error": {"message": f"Invalid JSON: {e}", "type": "invalid_request_error"}},
+                status=400
+            )
+
+        model = data.get("model", "text-embedding-ada-002")
+        input_text = data.get("input", "")
+        encoding_format = data.get("encoding_format", "float")
+        dimensions = data.get("dimensions")
+        user = data.get("user")
+
+        # Convert input to list if it's a string
+        if isinstance(input_text, str):
+            input_texts = [input_text]
+        elif isinstance(input_text, list):
+            input_texts = input_text
+        else:
+            return web.json_response(
+                {"error": {"message": "Input must be string or array of strings", "type": "invalid_request_error"}},
+                status=400
+            )
+
+        # Mode-specific handling
+        if self.mode == ServerMode.MOCK:
+            return await self._handle_mock_embeddings(request, model, input_texts, data)
+        elif self.mode == ServerMode.RECORD:
+            return await self._handle_record_embeddings(data)
+        elif self.mode == ServerMode.REPLAY:
+            return await self._handle_replay_embeddings(data)
+
+    async def _handle_mock_embeddings(self, request: Request, model: str, input_texts: List[str],
+                                     full_request: Dict) -> Response:
+        """Handle mocked embeddings responses using scenarios"""
+
+        if not self.scenario:
+            return web.json_response(
+                {"error": {"message": "No scenario loaded", "type": "server_error"}},
+                status=500
+            )
+
+        # Try to find a matching rule for embeddings
+        # We'll check for rules that match the embeddings endpoint
+        rule = None
+        respond_config = None
+
+        for r in self.scenario.rules:
+            # Check if this is an embeddings rule
+            if r.type == "llm.openai" or r.type == "embeddings":
+                # Check endpoint matching (for rules that specify endpoint)
+                if hasattr(r.when, 'endpoint') and r.when.endpoint == "/v1/embeddings":
+                    rule = r
+                    respond_config = r.respond
+                    break
+                # Check model matching for embeddings models
+                elif hasattr(r.when, 'model') and r.when.model:
+                    if (r.when.model == "*" or
+                        r.when.model == model or
+                        (r.when.model.endswith("*") and model.startswith(r.when.model[:-1])) or
+                        "embedding" in r.when.model.lower()):
+                        # Also check if input text matches any criteria
+                        if hasattr(r.when, 'messages_contains'):
+                            combined_input = ' '.join(input_texts).lower()
+                            if r.when.messages_contains.lower() in combined_input:
+                                rule = r
+                                respond_config = r.respond
+                                break
+                        elif hasattr(r.when, 'messages_regex'):
+                            import re
+                            combined_input = ' '.join(input_texts)
+                            if re.search(r.when.messages_regex, combined_input, re.IGNORECASE):
+                                rule = r
+                                respond_config = r.respond
+                                break
+                        else:
+                            # Model matches and no specific input criteria
+                            rule = r
+                            respond_config = r.respond
+                            break
+
+        if not rule:
+            return web.json_response(
+                {"error": {"message": "No matching rule found for embeddings request", "type": "server_error"}},
+                status=404
+            )
+
+        # Handle error responses
+        if hasattr(rule, 'error') and rule.error:
+            error = rule.error
+            error_type = getattr(error, 'error_type', 'server_error')
+            message = getattr(error, 'message', 'Unknown error')
+            status_code = getattr(error, 'status_code', 500)
+
+            # Add delay if specified
+            if hasattr(error, 'delay_ms') and error.delay_ms:
+                await asyncio.sleep(error.delay_ms / 1000.0)
+
+            return web.json_response(
+                {"error": {"message": message, "type": error_type}},
+                status=status_code
+            )
+
+        # Generate mock embeddings response
+        embedding_data = []
+
+        for i, text in enumerate(input_texts):
+            # Check if rule specifies embeddings
+            if respond_config and hasattr(respond_config, 'embeddings') and respond_config.embeddings:
+                embeddings_config = respond_config.embeddings
+                if isinstance(embeddings_config, list) and len(embeddings_config) > i:
+                    embedding_vector = embeddings_config[i].get('embedding', [])
+                else:
+                    # Use first embedding as template
+                    embedding_vector = embeddings_config[0].get('embedding', []) if embeddings_config else []
+            else:
+                # Generate default mock embedding (normalized random-ish vector)
+                # Use text hash for reproducible results
+                text_hash = hash(text + model) % (2**32)
+                import random
+                random.seed(text_hash)
+
+                # Default dimensions based on common models
+                default_dims = {
+                    "text-embedding-ada-002": 1536,
+                    "text-embedding-3-small": 1536,
+                    "text-embedding-3-large": 3072
+                }
+                dims = dimensions or default_dims.get(model, 1536)
+
+                # Generate normalized vector
+                embedding_vector = [random.gauss(0, 0.1) for _ in range(dims)]
+                # Simple normalization
+                magnitude = sum(x*x for x in embedding_vector) ** 0.5
+                if magnitude > 0:
+                    embedding_vector = [x/magnitude for x in embedding_vector]
+
+            embedding_data.append({
+                "object": "embedding",
+                "embedding": embedding_vector,
+                "index": i
+            })
+
+        # Calculate token usage
+        total_tokens = sum(len(text.split()) for text in input_texts)  # Rough estimate
+        if respond_config and hasattr(respond_config, 'usage'):
+            usage = respond_config.usage
+            if hasattr(usage, 'input_tokens') or (isinstance(usage, dict) and 'input_tokens' in usage):
+                input_tokens = getattr(usage, 'input_tokens', None) if hasattr(usage, 'input_tokens') else usage.get('input_tokens', total_tokens)
+            else:
+                input_tokens = total_tokens
+        else:
+            input_tokens = total_tokens
+
+        # Track cost
+        self.cost_tracker.track(model, input_tokens, 0)  # Embeddings don't have output tokens
+
+        # Consume rule if it has limited uses
+        if rule and hasattr(rule, 'times') and rule.times is not None:
+            rule.consume()
+
+        response_data = {
+            "object": "list",
+            "data": embedding_data,
+            "model": model,
+            "usage": {
+                "prompt_tokens": input_tokens,
+                "total_tokens": input_tokens
+            }
+        }
+
+        return web.json_response(response_data)
+
+    async def _handle_record_embeddings(self, request_data: Dict) -> Response:
+        """Record real OpenAI embeddings API calls"""
+
+        if not self.real_openai_key:
+            return web.json_response(
+                {"error": {"message": "OpenAI API key not configured for recording", "type": "server_error"}},
+                status=500
+            )
+
+        if not self.recorder:
+            return web.json_response(
+                {"error": {"message": "Recorder not initialized", "type": "server_error"}},
+                status=500
+            )
+
+        # Proxy to real OpenAI embeddings API
+        url = "https://api.openai.com/v1/embeddings"
+        headers = {"Content-Type": "application/json"}
+
+        try:
+            status, resp_headers, resp_body = await self.recorder.proxy_request(
+                method="POST",
+                url=url,
+                headers=headers,
+                body=request_data,
+                api_key=self.real_openai_key
+            )
+
+            # Track cost of real API call
+            model = request_data.get("model", "text-embedding-ada-002")
+            if "usage" in resp_body:
+                self.cost_tracker.track(
+                    model,
+                    resp_body["usage"].get("prompt_tokens", 0),
+                    0  # embeddings don't have completion tokens
+                )
+
+            return web.json_response(resp_body, status=status)
+
+        except Exception as e:
+            logger.error(f"Error proxying embeddings request: {e}")
+            return web.json_response(
+                {"error": {"message": f"Proxy error: {str(e)}", "type": "proxy_error"}},
+                status=500
+            )
+
+    async def _handle_replay_embeddings(self, request_data: Dict) -> Response:
+        """Replay recorded embeddings interactions"""
+
+        if not self.replayer:
+            return web.json_response(
+                {"error": {"message": "Replayer not initialized", "type": "server_error"}},
+                status=500
+            )
+
+        try:
+            interaction = self.replayer.find_matching_interaction(
+                endpoint="/v1/embeddings",
+                method="POST",
+                request_data=request_data
+            )
+
+            if not interaction:
+                return web.json_response(
+                    {"error": {"message": "No matching recorded interaction found", "type": "not_found"}},
+                    status=404
+                )
+
+            # Track cost of replayed call
+            model = request_data.get("model", "text-embedding-ada-002")
+            if "usage" in interaction.response_data:
+                self.cost_tracker.track(
+                    model,
+                    interaction.response_data["usage"].get("prompt_tokens", 0),
+                    0  # embeddings don't have completion tokens
+                )
+
+            return web.json_response(interaction.response_data, status=interaction.response_status)
+
+        except Exception as e:
+            logger.error(f"Error replaying embeddings: {e}")
+            return web.json_response(
+                {"error": {"message": f"Replay error: {str(e)}", "type": "replay_error"}},
+                status=500
+            )
+
     async def _handle_mock_openai(self, request: Request, model: str, messages: List[Dict],
                                   stream: bool, full_request: Dict) -> Union[Response, StreamResponse]:
         """Handle mocked OpenAI responses using scenarios"""
@@ -478,6 +742,7 @@ class MockServer:
 
         # OpenAI-compatible endpoints
         app.router.add_post('/v1/chat/completions', self.handle_openai_chat)
+        app.router.add_post('/v1/embeddings', self.handle_openai_embeddings)
         app.router.add_get('/v1/models', self.handle_models)
 
         # Anthropic-compatible endpoints

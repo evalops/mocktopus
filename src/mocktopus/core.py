@@ -7,6 +7,289 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import yaml
 
+# JSON Schema for scenario validation
+SCENARIO_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "version": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1,
+            "description": "Schema version (currently only version 1 is supported)"
+        },
+        "meta": {
+            "type": "object",
+            "properties": {
+                "description": {"type": "string"},
+                "author": {"type": "string"},
+                "created": {"type": "string"},
+                "environment": {"type": "string"},
+                "use_cases": {
+                    "type": "array",
+                    "items": {"type": "string"}
+                }
+            },
+            "additionalProperties": True
+        },
+        "rules": {
+            "type": "array",
+            "minItems": 0,
+            "items": {
+                "type": "object",
+                "properties": {
+                    "type": {
+                        "type": "string",
+                        "enum": ["llm.openai", "llm", "embeddings"],
+                        "description": "Rule type"
+                    },
+                    "when": {
+                        "type": "object",
+                        "properties": {
+                            "model": {
+                                "type": "string",
+                                "description": "Model pattern (supports wildcards like 'gpt-*')"
+                            },
+                            "messages_contains": {
+                                "type": "string",
+                                "description": "Text that must be present in user messages"
+                            },
+                            "messages_regex": {
+                                "type": "string",
+                                "description": "Regex pattern for message content"
+                            },
+                            "endpoint": {
+                                "type": "string",
+                                "description": "Specific API endpoint to match (e.g., '/v1/embeddings')"
+                            }
+                        },
+                        "additionalProperties": True
+                    },
+                    "respond": {
+                        "type": "object",
+                        "properties": {
+                            "content": {
+                                "type": ["string", "null"],
+                                "description": "Response text content"
+                            },
+                            "tool_calls": {
+                                "type": "array",
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "id": {"type": "string"},
+                                        "type": {"type": "string", "enum": ["function"]},
+                                        "function": {
+                                            "type": "object",
+                                            "properties": {
+                                                "name": {"type": "string"},
+                                                "arguments": {"type": "string"}
+                                            },
+                                            "required": ["name", "arguments"]
+                                        }
+                                    },
+                                    "required": ["id", "type", "function"]
+                                }
+                            },
+                            "usage": {
+                                "type": "object",
+                                "properties": {
+                                    "input_tokens": {"type": "integer", "minimum": 0},
+                                    "output_tokens": {"type": "integer", "minimum": 0},
+                                    "total_tokens": {"type": "integer", "minimum": 0}
+                                },
+                                "additionalProperties": False
+                            },
+                            "embeddings": {
+                                "type": "array",
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "embedding": {
+                                            "type": "array",
+                                            "items": {"type": "number"}
+                                        }
+                                    },
+                                    "required": ["embedding"]
+                                }
+                            },
+                            "images": {
+                                "type": "array",
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "url": {"type": "string"},
+                                        "revised_prompt": {"type": "string"}
+                                    },
+                                    "required": ["url"]
+                                }
+                            },
+                            "audio_url": {
+                                "type": "string",
+                                "description": "URL to generated audio file"
+                            },
+                            "delay_ms": {
+                                "type": "integer",
+                                "minimum": 0,
+                                "description": "Delay before responding (milliseconds)"
+                            },
+                            "chunk_size": {
+                                "type": "integer",
+                                "minimum": 1,
+                                "description": "Streaming chunk size in characters"
+                            },
+                            "id": {
+                                "type": "string",
+                                "description": "Custom response ID"
+                            },
+                            "metadata": {
+                                "type": "object",
+                                "description": "Additional response metadata"
+                            }
+                        },
+                        "additionalProperties": True
+                    },
+                    "error": {
+                        "type": "object",
+                        "properties": {
+                            "error_type": {
+                                "type": "string",
+                                "enum": ["rate_limit", "authentication", "timeout", "content_filter", "server_error"],
+                                "description": "Type of error to simulate"
+                            },
+                            "message": {
+                                "type": "string",
+                                "description": "Error message"
+                            },
+                            "status_code": {
+                                "type": "integer",
+                                "minimum": 400,
+                                "maximum": 599,
+                                "description": "HTTP status code"
+                            },
+                            "code": {
+                                "type": "string",
+                                "description": "API-specific error code"
+                            },
+                            "retry_after": {
+                                "type": "integer",
+                                "minimum": 0,
+                                "description": "Retry-After header value in seconds"
+                            },
+                            "delay_ms": {
+                                "type": "integer",
+                                "minimum": 0,
+                                "description": "Delay before error response (milliseconds)"
+                            }
+                        },
+                        "required": ["error_type", "message"],
+                        "additionalProperties": False
+                    },
+                    "times": {
+                        "type": ["integer", "null"],
+                        "minimum": 1,
+                        "description": "Maximum number of times this rule can be used (null = unlimited)"
+                    }
+                },
+                "required": ["type", "when"],
+                "additionalProperties": False,
+                "anyOf": [
+                    {"required": ["respond"]},
+                    {"required": ["error"]}
+                ]
+            }
+        }
+    },
+    "required": ["version", "rules"],
+    "additionalProperties": False
+}
+
+
+def validate_scenario_data(data: Dict[str, Any]) -> List[str]:
+    """
+    Validate scenario data against schema.
+    Returns list of validation errors (empty if valid).
+    """
+    errors = []
+
+    try:
+        # Try to import jsonschema for detailed validation
+        import jsonschema
+        validator = jsonschema.Draft7Validator(SCENARIO_SCHEMA)
+        for error in validator.iter_errors(data):
+            # Create readable error messages
+            path = " -> ".join(str(p) for p in error.path) if error.path else "root"
+            errors.append(f"{path}: {error.message}")
+        return errors
+    except ImportError:
+        # Fallback to basic validation without jsonschema
+        pass
+
+    # Basic validation without jsonschema
+    if not isinstance(data, dict):
+        errors.append("Root must be an object")
+        return errors
+
+    # Check version
+    if "version" not in data:
+        errors.append("version: Required field missing")
+    elif not isinstance(data["version"], int) or data["version"] != 1:
+        errors.append("version: Must be integer 1")
+
+    # Check rules
+    if "rules" not in data:
+        errors.append("rules: Required field missing")
+    elif not isinstance(data["rules"], list):
+        errors.append("rules: Must be an array")
+    else:
+        for i, rule in enumerate(data["rules"]):
+            rule_path = f"rules[{i}]"
+            if not isinstance(rule, dict):
+                errors.append(f"{rule_path}: Must be an object")
+                continue
+
+            # Check required fields
+            if "type" not in rule:
+                errors.append(f"{rule_path}.type: Required field missing")
+            elif rule["type"] not in ["llm.openai", "llm", "embeddings"]:
+                errors.append(f"{rule_path}.type: Must be 'llm.openai', 'llm', or 'embeddings'")
+
+            if "when" not in rule:
+                errors.append(f"{rule_path}.when: Required field missing")
+            elif not isinstance(rule["when"], dict):
+                errors.append(f"{rule_path}.when: Must be an object")
+
+            # Must have either respond or error
+            has_respond = "respond" in rule
+            has_error = "error" in rule
+            if not has_respond and not has_error:
+                errors.append(f"{rule_path}: Must have either 'respond' or 'error' field")
+
+            # Validate respond structure if present
+            if has_respond and not isinstance(rule["respond"], dict):
+                errors.append(f"{rule_path}.respond: Must be an object")
+
+            # Validate error structure if present
+            if has_error:
+                if not isinstance(rule["error"], dict):
+                    errors.append(f"{rule_path}.error: Must be an object")
+                else:
+                    error_obj = rule["error"]
+                    if "error_type" not in error_obj:
+                        errors.append(f"{rule_path}.error.error_type: Required field missing")
+                    if "message" not in error_obj:
+                        errors.append(f"{rule_path}.error.message: Required field missing")
+
+            # Validate times if present
+            if "times" in rule and rule["times"] is not None:
+                if not isinstance(rule["times"], int) or rule["times"] < 1:
+                    errors.append(f"{rule_path}.times: Must be positive integer or null")
+
+    # Check meta if present
+    if "meta" in data and not isinstance(data["meta"], dict):
+        errors.append("meta: Must be an object")
+
+    return errors
+
 
 @dataclass
 class Rule:
@@ -113,6 +396,16 @@ class Scenario:
     def from_yaml(cls, path: str) -> "Scenario":
         with open(path, "r", encoding="utf-8") as f:
             data = yaml.safe_load(f) or {}
+
+        # Validate schema
+        validation_errors = validate_scenario_data(data)
+        if validation_errors:
+            error_msg = f"Schema validation failed for {path}:\n"
+            for i, error in enumerate(validation_errors, 1):
+                error_msg += f"  {i}. {error}\n"
+            error_msg += "\n💡 Use 'mocktopus validate' for detailed validation help"
+            raise ValueError(error_msg)
+
         version = data.get("version", 1)
         if version != 1:
             raise ValueError(f"Unsupported fixture version: {version}")
