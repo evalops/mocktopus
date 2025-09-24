@@ -13,25 +13,30 @@ import time
 from mocktopus import Scenario, load_yaml
 from mocktopus.server import MockServer, ServerMode
 from mocktopus.cost_tracker import CostTracker
+from mocktopus.core import Rule
 
 
 @pytest.fixture
 async def mock_server():
     """Start a mock server for testing"""
     scenario = Scenario()
-    scenario.rules.append({
-        "type": "llm.openai",
-        "when": {"messages_contains": "hello"},
-        "respond": {"content": "Hello from mock!", "usage": {"input_tokens": 5, "output_tokens": 4}}
-    })
+    scenario.rules.append(Rule(
+        type="llm.openai",
+        when={"messages_contains": "hello"},
+        respond={"content": "Hello from mock!", "usage": {"input_tokens": 5, "output_tokens": 4}}
+    ))
 
-    server = MockServer(scenario=scenario, port=8089, host="127.0.0.1")
+    # Use port 0 to get a random available port
+    server = MockServer(scenario=scenario, port=0, host="127.0.0.1")
     app = server.create_app()
 
     runner = aiohttp.web.AppRunner(app)
     await runner.setup()
-    site = aiohttp.web.TCPSite(runner, "127.0.0.1", 8089)
+    site = aiohttp.web.TCPSite(runner, "127.0.0.1", 0)
     await site.start()
+
+    # Update server port with the actual port that was bound
+    server.port = site._server.sockets[0].getsockname()[1]
 
     yield server
 
@@ -44,7 +49,7 @@ async def test_basic_chat_completion(mock_server):
     async with aiohttp.ClientSession() as session:
         # Test successful request
         async with session.post(
-            "http://localhost:8089/v1/chat/completions",
+            f"http://localhost:{mock_server.port}/v1/chat/completions",
             json={
                 "model": "gpt-4",
                 "messages": [{"role": "user", "content": "hello"}]
@@ -57,7 +62,7 @@ async def test_basic_chat_completion(mock_server):
 
         # Test no match
         async with session.post(
-            "http://localhost:8089/v1/chat/completions",
+            f"http://localhost:{mock_server.port}/v1/chat/completions",
             json={
                 "model": "gpt-4",
                 "messages": [{"role": "user", "content": "unknown"}]
@@ -70,18 +75,21 @@ async def test_basic_chat_completion(mock_server):
 async def test_streaming_response():
     """Test SSE streaming response"""
     scenario = load_yaml("examples/chat-basic.yaml")
-    server = MockServer(scenario=scenario, port=8090)
+    server = MockServer(scenario=scenario, port=0)
     app = server.create_app()
 
     runner = aiohttp.web.AppRunner(app)
     await runner.setup()
-    site = aiohttp.web.TCPSite(runner, "127.0.0.1", 8090)
+    site = aiohttp.web.TCPSite(runner, "127.0.0.1", 0)
     await site.start()
+
+    # Update server port with the actual port that was bound
+    server.port = site._server.sockets[0].getsockname()[1]
 
     try:
         async with aiohttp.ClientSession() as session:
             async with session.post(
-                "http://localhost:8090/v1/chat/completions",
+                f"http://localhost:{server.port}/v1/chat/completions",
                 json={
                     "model": "gpt-4",
                     "messages": [{"role": "user", "content": "hello"}],
@@ -274,11 +282,11 @@ def test_rule_matching():
     scenario = Scenario()
 
     # Test exact match
-    scenario.rules.append({
-        "type": "llm.openai",
-        "when": {"messages_contains": "weather"},
-        "respond": {"content": "It's sunny!"}
-    })
+    scenario.rules.append(Rule(
+        type="llm.openai",
+        when={"messages_contains": "weather"},
+        respond={"content": "It's sunny!"}
+    ))
 
     rule, response = scenario.find_llm(
         model="gpt-4",
@@ -289,11 +297,11 @@ def test_rule_matching():
 
     # Test regex match
     scenario.rules = []
-    scenario.rules.append({
-        "type": "llm.openai",
-        "when": {"messages_regex": r"\d+ \+ \d+"},
-        "respond": {"content": "Math detected"}
-    })
+    scenario.rules.append(Rule(
+        type="llm.openai",
+        when={"messages_regex": r"\d+ \+ \d+"},
+        respond={"content": "Math detected"}
+    ))
 
     rule, response = scenario.find_llm(
         model="gpt-4",
@@ -304,11 +312,11 @@ def test_rule_matching():
 
     # Test model glob match
     scenario.rules = []
-    scenario.rules.append({
-        "type": "llm.openai",
-        "when": {"model": "gpt-3.5*"},
-        "respond": {"content": "GPT-3.5 response"}
-    })
+    scenario.rules.append(Rule(
+        type="llm.openai",
+        when={"model": "gpt-3.5*"},
+        respond={"content": "GPT-3.5 response"}
+    ))
 
     rule, response = scenario.find_llm(
         model="gpt-3.5-turbo",
@@ -329,12 +337,12 @@ def test_usage_limits():
     """Test rule usage limits"""
     scenario = Scenario()
 
-    rule = {
-        "type": "llm.openai",
-        "when": {"messages_contains": "test"},
-        "respond": {"content": "Limited"},
-        "times": 2
-    }
+    rule = Rule(
+        type="llm.openai",
+        when={"messages_contains": "test"},
+        respond={"content": "Limited"},
+        times=2
+    )
     scenario.rules.append(rule)
 
     # Should work twice

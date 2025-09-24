@@ -88,13 +88,13 @@ class MockServer:
 
         # Mode-specific handling
         if self.mode == ServerMode.MOCK:
-            return await self._handle_mock_openai(model, messages, stream, data)
+            return await self._handle_mock_openai(request, model, messages, stream, data)
         elif self.mode == ServerMode.RECORD:
             return await self._handle_record_openai(data, stream)
         elif self.mode == ServerMode.REPLAY:
             return await self._handle_replay_openai(data, stream)
 
-    async def _handle_mock_openai(self, model: str, messages: List[Dict],
+    async def _handle_mock_openai(self, request: Request, model: str, messages: List[Dict],
                                   stream: bool, full_request: Dict) -> Union[Response, StreamResponse]:
         """Handle mocked OpenAI responses using scenarios"""
 
@@ -136,7 +136,7 @@ class MockServer:
 
         # Stream response
         if stream:
-            return await self._stream_openai_response(content, model, tool_calls)
+            return await self._stream_openai_response(request, content, model, tool_calls)
 
         # Regular response
         response_data = {
@@ -240,7 +240,7 @@ class MockServer:
                 status=status_code
             )
 
-    async def _stream_openai_response(self, content: str, model: str,
+    async def _stream_openai_response(self, request: Request, content: str, model: str,
                                       tool_calls: List[Dict] = None) -> StreamResponse:
         """Stream OpenAI response using Server-Sent Events"""
 
@@ -249,7 +249,7 @@ class MockServer:
         response.headers['Cache-Control'] = 'no-cache'
         response.headers['X-Accel-Buffering'] = 'no'
 
-        await response.prepare()
+        await response.prepare(request)
 
         # Stream ID
         stream_id = f"chatcmpl-{uuid.uuid4().hex[:8]}"
