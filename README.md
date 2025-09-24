@@ -154,6 +154,23 @@ rules:
       chunk_size: 5  # Characters per chunk
 ```
 
+### Embeddings API
+
+```yaml
+version: 1
+rules:
+  - type: llm.openai
+    when:
+      endpoint: "/v1/embeddings"
+    respond:
+      embeddings:
+        - embedding: [0.1, 0.2, -0.3, 0.4]  # Mock embedding vectors
+          index: 0
+      usage:
+        input_tokens: 5
+        total_tokens: 5
+```
+
 ### Limited Usage
 
 ```yaml
@@ -169,6 +186,16 @@ rules:
 
 ## CLI Commands
 
+### Project Setup
+```bash
+# Initialize a new project with templates
+mocktopus init                              # Basic template
+mocktopus init --template rag              # RAG/embeddings testing
+mocktopus init --template agents           # Multi-step agent workflows
+mocktopus init --template multimodal       # Image/audio/vision APIs
+mocktopus init --template enterprise       # Advanced error handling
+```
+
 ### Start Server
 ```bash
 # Basic usage
@@ -181,12 +208,24 @@ mocktopus serve -s scenario.yaml -p 9000
 mocktopus serve -s scenario.yaml -v
 ```
 
-### Test Scenarios
+### Development & Debugging
 ```bash
-# Validate a scenario file
+# Validate scenario files with schema checking
 mocktopus validate scenario.yaml
 
-# Simulate a request without starting server
+# Explain rule matching for debugging
+mocktopus explain -s scenario.yaml --prompt "Hello world"
+mocktopus explain -s scenario.yaml --model gpt-4 --prompt "help me" -v
+
+# Diagnose configuration issues
+mocktopus doctor                            # General environment check
+mocktopus doctor -s scenario.yaml          # Diagnose specific scenario
+mocktopus doctor --fix                      # Auto-fix common issues
+```
+
+### Testing & Examples
+```bash
+# Simulate requests without starting server
 mocktopus simulate -s scenario.yaml --prompt "Hello"
 
 # Generate example scenarios
@@ -264,8 +303,10 @@ respond:
 - [x] Streaming support (SSE)
 - [x] Function/tool calling
 - [x] Anthropic messages API
+- [x] Embeddings API
+- [x] Comprehensive CLI tools
+- [x] JSON schema validation
 - [ ] Recording & replay
-- [ ] Embeddings API
 - [ ] Assistants API
 - [ ] Image generation
 - [ ] Semantic similarity matching
