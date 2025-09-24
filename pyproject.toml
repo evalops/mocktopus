@@ -1,0 +1,33 @@
+[build-system]
+requires = ["hatchling>=1.26"]
+build-backend = "hatchling.build"
+
+[project]
+name = "mocktopus"
+version = "0.1.0"
+description = "Multi-armed mocks for LLM apps: deterministic, dataset-driven mocks for OpenAI/Anthropic & tool calls."
+readme = "README.md"
+requires-python = ">=3.9"
+license = {text = "MIT"}
+authors = [{name = "Jonathan Haas"}]
+dependencies = [
+  "PyYAML>=6.0",
+  "click>=8.1",
+  "typing-extensions>=4.9",
+]
+
+[project.urls]
+Homepage = "https://example.com/mocktopus"
+
+[project.scripts]
+mocktopus = "mocktopus.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/mocktopus"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py39"
+
+[tool.pytest.ini_options]
+addopts = "-q"

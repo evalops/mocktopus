@@ -1,0 +1,15 @@
+version: 1
+rules:
+  - type: llm.openai
+    when:
+      messages_contains: "haiku"
+      model: "*"
+    respond:
+      content: |
+        Silent bay at dusk
+        Eight arms fold into the deep
+        Tides keep time for stars.
+      usage:
+        input_tokens: 12
+        output_tokens: 17
+      stream: false
