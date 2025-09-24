@@ -21,6 +21,8 @@ from aiohttp import web
 from aiohttp.web import Request, Response, StreamResponse
 
 from .core import Scenario
+from .recorder import Recorder, Replayer, RecordedInteraction
+from .cost_tracker import CostTracker
 
 logger = logging.getLogger(__name__)
 
@@ -51,11 +53,18 @@ class MockServer:
     host: str = "127.0.0.1"
 
     def __post_init__(self):
-        self.recordings = []
-        self.replay_index = 0
+        self.cost_tracker = CostTracker()
+        self.recorder = None
+        self.replayer = None
+
         if self.recordings_dir:
             self.recordings_dir = Path(self.recordings_dir)
             self.recordings_dir.mkdir(parents=True, exist_ok=True)
+
+            if self.mode == ServerMode.RECORD:
+                self.recorder = Recorder(self.recordings_dir)
+            elif self.mode == ServerMode.REPLAY:
+                self.replayer = Replayer(self.recordings_dir)
 
     # OpenAI Chat Completions Handler
     async def handle_openai_chat(self, request: Request) -> Union[Response, StreamResponse]:
@@ -106,11 +115,20 @@ class MockServer:
 
         rule.consume()
 
+        # Check if this is an error response
+        if "error_type" in respond_config:
+            return await self._handle_error_response(respond_config)
+
         # Extract response config
         content = respond_config.get("content", "Mocked response")
         delay_ms = respond_config.get("delay_ms", 0)
         tool_calls = respond_config.get("tool_calls", [])
         usage = respond_config.get("usage", {})
+
+        # Track cost savings
+        input_tokens = usage.get("input_tokens", 100)
+        output_tokens = usage.get("output_tokens", 200)
+        self.cost_tracker.track(model, input_tokens, output_tokens)
 
         # Handle delay
         if delay_ms > 0:
@@ -148,6 +166,79 @@ class MockServer:
             response_data["choices"][0]["finish_reason"] = "tool_calls"
 
         return web.json_response(response_data)
+
+    async def _handle_error_response(self, error_config: Dict[str, Any]) -> Response:
+        """Handle error response configuration"""
+        error_type = error_config.get("error_type", "server_error")
+        message = error_config.get("message", "Mock error")
+        status_code = error_config.get("status_code", 500)
+        delay_ms = error_config.get("delay_ms", 0)
+
+        # Handle delay
+        if delay_ms > 0:
+            await asyncio.sleep(delay_ms / 1000)
+
+        # Build error response based on type
+        if error_type == "rate_limit":
+            return web.json_response(
+                {
+                    "error": {
+                        "message": message or "Rate limit exceeded",
+                        "type": "rate_limit_error",
+                        "code": "rate_limit_exceeded"
+                    }
+                },
+                status=status_code or 429,
+                headers={"Retry-After": str(error_config.get("retry_after", 60))}
+            )
+        elif error_type == "invalid_request":
+            return web.json_response(
+                {
+                    "error": {
+                        "message": message or "Invalid request",
+                        "type": "invalid_request_error",
+                        "code": "invalid_request"
+                    }
+                },
+                status=status_code or 400
+            )
+        elif error_type == "authentication":
+            return web.json_response(
+                {
+                    "error": {
+                        "message": message or "Invalid API key",
+                        "type": "authentication_error",
+                        "code": "invalid_api_key"
+                    }
+                },
+                status=status_code or 401
+            )
+        elif error_type == "timeout":
+            # Simulate timeout by waiting then returning error
+            if delay_ms == 0:
+                await asyncio.sleep(30)  # Default 30 second timeout
+            return web.json_response(
+                {
+                    "error": {
+                        "message": message or "Request timeout",
+                        "type": "timeout_error",
+                        "code": "timeout"
+                    }
+                },
+                status=status_code or 504
+            )
+        else:
+            # Generic error
+            return web.json_response(
+                {
+                    "error": {
+                        "message": message,
+                        "type": error_type,
+                        "code": error_config.get("code", "unknown_error")
+                    }
+                },
+                status=status_code
+            )
 
     async def _stream_openai_response(self, content: str, model: str,
                                       tool_calls: List[Dict] = None) -> StreamResponse:
@@ -210,29 +301,79 @@ class MockServer:
                 status=500
             )
 
-        # TODO: Implement actual OpenAI API proxy and recording
-        # This would use aiohttp to call real OpenAI API and save the interaction
+        if not self.recorder:
+            return web.json_response(
+                {"error": {"message": "Recorder not initialized", "type": "server_error"}},
+                status=500
+            )
 
-        return web.json_response(
-            {"error": {"message": "Recording mode not yet implemented", "type": "not_implemented"}},
-            status=501
-        )
+        # Proxy to real OpenAI API
+        url = "https://api.openai.com/v1/chat/completions"
+        headers = {"Content-Type": "application/json"}
+
+        try:
+            status, resp_headers, resp_body = await self.recorder.proxy_request(
+                method="POST",
+                url=url,
+                headers=headers,
+                body=request_data,
+                api_key=self.real_openai_key
+            )
+
+            # Track cost of real API call
+            model = request_data.get("model", "gpt-3.5-turbo")
+            if "usage" in resp_body:
+                self.cost_tracker.track(
+                    model,
+                    resp_body["usage"].get("prompt_tokens", 0),
+                    resp_body["usage"].get("completion_tokens", 0)
+                )
+
+            return web.json_response(resp_body, status=status)
+
+        except Exception as e:
+            logger.error(f"Error proxying request: {e}")
+            return web.json_response(
+                {"error": {"message": f"Proxy error: {str(e)}", "type": "proxy_error"}},
+                status=500
+            )
 
     async def _handle_replay_openai(self, request_data: Dict, stream: bool) -> Response:
         """Replay recorded OpenAI interactions"""
 
-        if not self.recordings:
+        if not self.replayer:
             return web.json_response(
-                {"error": {"message": "No recordings available", "type": "not_found"}},
+                {"error": {"message": "Replayer not initialized", "type": "server_error"}},
+                status=500
+            )
+
+        # Find matching recording
+        interaction = self.replayer.find_matching_interaction(
+            method="POST",
+            path="/v1/chat/completions",
+            body=request_data
+        )
+
+        if not interaction:
+            return web.json_response(
+                {"error": {"message": "No matching recording found", "type": "not_found"}},
                 status=404
             )
 
-        # TODO: Implement replay from recordings
+        # Track cost savings from replay
+        model = request_data.get("model", "gpt-3.5-turbo")
+        if isinstance(interaction.response_body, dict) and "usage" in interaction.response_body:
+            self.cost_tracker.track(
+                model,
+                interaction.response_body["usage"].get("prompt_tokens", 100),
+                interaction.response_body["usage"].get("completion_tokens", 200)
+            )
 
-        return web.json_response(
-            {"error": {"message": "Replay mode not yet implemented", "type": "not_implemented"}},
-            status=501
-        )
+        # Simulate original response time
+        if interaction.response_time_ms > 0:
+            await asyncio.sleep(interaction.response_time_ms / 1000)
+
+        return web.json_response(interaction.response_body, status=interaction.response_status)
 
     # Anthropic Messages Handler
     async def handle_anthropic_messages(self, request: Request) -> Union[Response, StreamResponse]:
@@ -300,11 +441,17 @@ class MockServer:
     # Health check endpoint
     async def handle_health(self, request: Request) -> Response:
         """Health check endpoint"""
+        stats = {}
+        if self.replayer:
+            stats = self.replayer.get_statistics()
+
         return web.json_response({
             "status": "healthy",
             "mode": self.mode.value,
             "scenario_loaded": self.scenario is not None,
-            "recordings_count": len(self.recordings)
+            "recordings_stats": stats,
+            "cost_saved": f"${self.cost_tracker.get_report().total_saved:.2f}",
+            "requests_mocked": self.cost_tracker.get_report().requests_mocked
         })
 
     # Models endpoint (OpenAI)
@@ -335,7 +482,18 @@ class MockServer:
         # Health check
         app.router.add_get('/health', self.handle_health)
 
+        # Cost report endpoint
+        app.router.add_get('/cost-report', self.handle_cost_report)
+
         return app
+
+    async def handle_cost_report(self, request: Request) -> Response:
+        """Get cost savings report"""
+        report = self.cost_tracker.get_report()
+        return web.json_response({
+            "report": report.to_json(),
+            "summary": report.get_summary()
+        })
 
     def run(self):
         """Run the mock server"""
@@ -345,5 +503,19 @@ class MockServer:
         logger.info(f"Mode: {self.mode.value}")
         if self.scenario:
             logger.info(f"Scenario loaded with {len(self.scenario.rules)} rules")
+        if self.mode == ServerMode.RECORD:
+            logger.info(f"Recording to: {self.recordings_dir}")
+        elif self.mode == ServerMode.REPLAY:
+            if self.replayer:
+                stats = self.replayer.get_statistics()
+                logger.info(f"Replaying {stats.get('total', 0)} recorded interactions")
+
+        # Add shutdown handler to show cost report
+        async def on_shutdown(app):
+            report = self.cost_tracker.get_report()
+            if report.requests_mocked > 0:
+                print("\n" + report.get_summary())
+
+        app.on_shutdown.append(on_shutdown)
 
         web.run_app(app, host=self.host, port=self.port, print=False)

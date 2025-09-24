@@ -16,6 +16,7 @@ class Rule:
     when: Dict[str, Any]
     respond: Dict[str, Any]
     times: Optional[int] = None  # None => unlimited
+    error: Optional[Dict[str, Any]] = None  # Error response config
     _remaining: Optional[int] = field(default=None, init=False, repr=False)
 
     def ok_to_use(self) -> bool:
@@ -101,7 +102,9 @@ class Scenario:
     def find_llm(self, *, model: str, messages: List[Dict[str, Any]]) -> Tuple[Optional[Rule], Optional[Dict[str, Any]]]:
         for rule in self.rules:
             if self._llm_rule_matches(rule, model=model, messages=messages):
-                return rule, rule.respond
+                # Return error config if present, otherwise normal response
+                response_config = rule.error if rule.error else rule.respond
+                return rule, response_config
         return None, None
 
     # --- YAML I/O ---------------------------------------------------------
@@ -122,6 +125,7 @@ class Scenario:
                     when=r.get("when", {}) or {},
                     respond=r.get("respond", {}) or {},
                     times=r.get("times"),
+                    error=r.get("error"),
                 )
             )
         meta = data.get("meta", {})

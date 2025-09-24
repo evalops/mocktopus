@@ -30,5 +30,12 @@ packages = ["src/mocktopus"]
 line-length = 100
 target-version = "py39"
 
+[project.optional-dependencies]
+test = [
+    "pytest>=7.0",
+    "pytest-asyncio>=0.21",
+]
+
 [tool.pytest.ini_options]
 addopts = "-q"
+asyncio_mode = "auto"

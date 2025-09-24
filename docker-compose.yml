@@ -1,0 +1,53 @@
+version: '3.8'
+
+services:
+  mocktopus:
+    build: .
+    image: mocktopus:latest
+    container_name: mocktopus
+    ports:
+      - "8080:8080"
+    volumes:
+      # Mount scenarios directory
+      - ./examples:/data/scenarios:ro
+      # Mount recordings directory for record/replay
+      - ./recordings:/data/recordings
+    environment:
+      # Default to mock mode
+      - MODE=mock
+      # Use chat-basic.yaml as default scenario
+      - SCENARIO_PATH=/data/scenarios/chat-basic.yaml
+      # Optional: Set API keys for record mode
+      # - OPENAI_API_KEY=your-key-here
+      # - ANTHROPIC_API_KEY=your-key-here
+    command: >
+      mocktopus serve
+      -s ${SCENARIO_PATH}
+      --mode ${MODE}
+      --recordings-dir /data/recordings
+      --host 0.0.0.0
+      -v
+    restart: unless-stopped
+    networks:
+      - mocktopus-net
+
+  # Optional: Add a test client service
+  test-client:
+    image: python:3.11-slim
+    container_name: mocktopus-test
+    depends_on:
+      - mocktopus
+    volumes:
+      - ./tests:/tests
+    environment:
+      - MOCKTOPUS_URL=http://mocktopus:8080
+    command: sleep infinity
+    networks:
+      - mocktopus-net
+
+networks:
+  mocktopus-net:
+    driver: bridge
+
+volumes:
+  recordings:

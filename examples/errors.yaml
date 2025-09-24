@@ -1,0 +1,84 @@
+version: 1
+meta:
+  description: Error scenario examples for testing error handling
+  author: Mocktopus
+
+rules:
+  # Rate limit error
+  - type: llm.openai
+    when:
+      messages_contains: "rate limit test"
+    error:
+      error_type: "rate_limit"
+      message: "Rate limit exceeded. Please retry after some time."
+      status_code: 429
+      retry_after: 60
+      delay_ms: 100
+
+  # Authentication error
+  - type: llm.openai
+    when:
+      messages_contains: "auth test"
+    error:
+      error_type: "authentication"
+      message: "Invalid API key provided"
+      status_code: 401
+
+  # Invalid request error
+  - type: llm.openai
+    when:
+      messages_contains: "invalid request"
+    error:
+      error_type: "invalid_request"
+      message: "The model 'gpt-5' does not exist"
+      status_code: 400
+
+  # Timeout simulation
+  - type: llm.openai
+    when:
+      messages_contains: "timeout test"
+    error:
+      error_type: "timeout"
+      message: "Request timed out after 30 seconds"
+      status_code: 504
+      delay_ms: 5000  # Wait 5 seconds then return timeout
+
+  # Server error
+  - type: llm.openai
+    when:
+      messages_contains: "server error"
+    error:
+      error_type: "server_error"
+      message: "Internal server error occurred"
+      status_code: 500
+
+  # Intermittent error (fails 2 times, then works)
+  - type: llm.openai
+    when:
+      messages_contains: "retry test"
+    times: 2
+    error:
+      error_type: "server_error"
+      message: "Temporary server issue"
+      status_code: 503
+
+  # After errors exhausted, this rule handles success
+  - type: llm.openai
+    when:
+      messages_contains: "retry test"
+    respond:
+      content: "Success after retries!"
+      usage:
+        input_tokens: 10
+        output_tokens: 5
+
+  # Custom error
+  - type: llm.openai
+    when:
+      messages_contains: "custom error"
+    error:
+      error_type: "content_filter"
+      message: "Content was blocked by safety filters"
+      code: "content_filtered"
+      status_code: 422
+      delay_ms: 200
