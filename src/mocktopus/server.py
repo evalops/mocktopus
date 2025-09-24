@@ -116,10 +116,12 @@ class MockServer:
         rule.consume()
 
         # Check if this is an error response
-        if "error_type" in respond_config:
+        if respond_config and "error_type" in respond_config:
             return await self._handle_error_response(respond_config)
 
-        # Extract response config
+        # Extract response config (handle None case)
+        if not respond_config:
+            respond_config = {}
         content = respond_config.get("content", "Mocked response")
         delay_ms = respond_config.get("delay_ms", 0)
         tool_calls = respond_config.get("tool_calls", [])
@@ -241,7 +243,7 @@ class MockServer:
             )
 
     async def _stream_openai_response(self, request: Request, content: str, model: str,
-                                      tool_calls: List[Dict] = None) -> StreamResponse:
+                                      tool_calls: Optional[List[Dict]] = None) -> StreamResponse:
         """Stream OpenAI response using Server-Sent Events"""
 
         response = web.StreamResponse()

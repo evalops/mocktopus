@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import sys
 import logging
-from typing import List, Dict, Any
+from pathlib import Path
+from typing import List, Dict, Any, Optional
 import click
 
 from .core import Scenario, load_yaml
@@ -58,7 +59,7 @@ def serve_cmd(scenario: str, port: int, host: str, mode: str, recordings_dir: st
     server = MockServer(
         scenario=scenario_obj,
         mode=server_mode,
-        recordings_dir=recordings_dir,
+        recordings_dir=Path(recordings_dir) if recordings_dir else None,
         real_openai_key=openai_key,
         real_anthropic_key=anthropic_key,
         host=host,
