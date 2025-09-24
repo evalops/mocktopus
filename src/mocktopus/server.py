@@ -52,7 +52,7 @@ class MockServer:
     port: int = 8080
     host: str = "127.0.0.1"
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         self.cost_tracker = CostTracker()
         self.recorder = None
         self.replayer = None
@@ -141,7 +141,7 @@ class MockServer:
             return await self._stream_openai_response(request, content, model, tool_calls)
 
         # Regular response
-        response_data = {
+        response_data: Dict[str, Any] = {
             "id": f"chatcmpl-{uuid.uuid4().hex[:8]}",
             "object": "chat.completion",
             "created": int(time.time()),
@@ -419,6 +419,8 @@ class MockServer:
             )
 
         rule.consume()
+        if not respond_config:
+            respond_config = {}
         content = respond_config.get("content", "Mocked response")
 
         response_data = {
@@ -497,7 +499,7 @@ class MockServer:
             "summary": report.get_summary()
         })
 
-    def run(self):
+    def run(self) -> None:
         """Run the mock server"""
         app = self.create_app()
 
@@ -513,11 +515,11 @@ class MockServer:
                 logger.info(f"Replaying {stats.get('total', 0)} recorded interactions")
 
         # Add shutdown handler to show cost report
-        async def on_shutdown(app):
+        async def on_shutdown(app: web.Application) -> None:
             report = self.cost_tracker.get_report()
             if report.requests_mocked > 0:
                 print("\n" + report.get_summary())
 
         app.on_shutdown.append(on_shutdown)
 
-        web.run_app(app, host=self.host, port=self.port, print=False)
+        web.run_app(app, host=self.host, port=self.port, print=None)

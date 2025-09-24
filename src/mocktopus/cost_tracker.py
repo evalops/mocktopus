@@ -148,7 +148,7 @@ class CostReport:
 class CostTracker:
     """Global cost tracker for the server"""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.report = CostReport()
 
     def track(self, model: str, input_tokens: Optional[int] = None,
@@ -162,7 +162,7 @@ class CostTracker:
 
         return self.report.track_request(model, input_tokens, output_tokens)
 
-    def reset(self):
+    def reset(self) -> None:
         """Reset tracking"""
         self.report = CostReport()
 

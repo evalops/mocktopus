@@ -12,7 +12,7 @@ from .llm_openai import OpenAIStubClient
 
 
 @click.group()
-def main():
+def main() -> None:
     """🐙 Mocktopus - Multi-armed mocks for LLM apps"""
 
 
@@ -27,7 +27,7 @@ def main():
 @click.option("--anthropic-key", envvar="ANTHROPIC_API_KEY", help="Anthropic API key for recording mode")
 @click.option("--verbose", "-v", is_flag=True, help="Verbose logging")
 def serve_cmd(scenario: str, port: int, host: str, mode: str, recordings_dir: str,
-              openai_key: str, anthropic_key: str, verbose: bool):
+              openai_key: str, anthropic_key: str, verbose: bool) -> None:
     """
     Start the Mocktopus server to mock LLM APIs.
 
@@ -84,7 +84,7 @@ def serve_cmd(scenario: str, port: int, host: str, mode: str, recordings_dir: st
 @click.option("--model", default="gpt-4o-mini", show_default=True, help="Model to simulate")
 @click.option("--prompt", required=True, help="User prompt to simulate")
 @click.option("--stream/--no-stream", default=False, show_default=True, help="Stream the response")
-def simulate_cmd(scenario_file: str, model: str, prompt: str, stream: bool):
+def simulate_cmd(scenario_file: str, model: str, prompt: str, stream: bool) -> None:
     """
     Simulate an LLM call using a scenario file (without starting a server).
 
@@ -113,7 +113,7 @@ def simulate_cmd(scenario_file: str, model: str, prompt: str, stream: bool):
 
 @main.command("validate")
 @click.argument("scenario_file", type=click.Path(exists=True))
-def validate_cmd(scenario_file: str):
+def validate_cmd(scenario_file: str) -> None:
     """
     Validate a scenario YAML file.
 
@@ -133,7 +133,7 @@ def validate_cmd(scenario_file: str):
 @main.command("example")
 @click.option("--type", "example_type", type=click.Choice(["basic", "streaming", "tools", "multi-model"]),
               default="basic", help="Type of example to generate")
-def example_cmd(example_type: str):
+def example_cmd(example_type: str) -> None:
     """
     Generate example scenario files.
 

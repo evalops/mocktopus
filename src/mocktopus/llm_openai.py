@@ -101,12 +101,14 @@ class OpenAIStubClient:
         def __init__(self, scenario: Scenario):
             self._scenario = scenario
 
-        def create(self, *, model: str, messages: List[Dict[str, Any]], stream: bool = False, **kwargs: Any):
+        def create(self, *, model: str, messages: List[Dict[str, Any]], stream: bool = False, **kwargs: Any) -> Any:
             rule, respond = self._scenario.find_llm(model=model, messages=messages)
             if not rule:
                 raise KeyError("No Mocktopus rule matched for the given model/messages.")
             rule.consume()
 
+            if not respond:
+                respond = {}
             content: str = respond.get("content", "")
             tool_calls = respond.get("tool_calls") or []
             usage = respond.get("usage") or {}
@@ -147,7 +149,7 @@ class patch_openai(ContextDecorator):
         self._original = None
         self._target_class = None
 
-    def __enter__(self):
+    def __enter__(self) -> Any:
         try:
             import importlib
             mod = importlib.import_module("openai.resources.chat.completions")
@@ -159,7 +161,7 @@ class patch_openai(ContextDecorator):
 
             scenario = self.scenario
 
-            def fake_create(this, *args, **kwargs):
+            def fake_create(this: Any, *args: Any, **kwargs: Any) -> Any:
                 model = kwargs.get("model") or ""
                 messages = kwargs.get("messages") or []
                 stream = kwargs.get("stream") or False
@@ -167,6 +169,8 @@ class patch_openai(ContextDecorator):
                 if not rule:
                     raise KeyError("No Mocktopus rule matched for the given model/messages.")
                 rule.consume()
+                if not respond:
+                    respond = {}
                 content: str = respond.get("content", "")
                 if stream:
                     delay_ms = respond.get("delay_ms", 0)
@@ -194,10 +198,9 @@ class patch_openai(ContextDecorator):
             self._patched = False
         return self
 
-    def __exit__(self, exc_type, exc, tb):
+    def __exit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
         if self._patched and self._target_class and self._original:
             try:
                 setattr(self._target_class, "create", self._original)
             except Exception:
                 pass
-        return False

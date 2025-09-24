@@ -30,7 +30,7 @@ class RecordedInteraction:
     provider: str = "openai"
     interaction_id: str = field(default="")
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if not self.interaction_id:
             # Generate deterministic ID from request
             content = f"{self.request_method}:{self.request_path}:{json.dumps(self.request_body, sort_keys=True)}"
@@ -174,7 +174,7 @@ class Replayer:
         if not self.interactions:
             return {"total": 0}
 
-        stats = {
+        stats: Dict[str, Any] = {
             "total": len(self.interactions),
             "by_model": {},
             "by_provider": {},
