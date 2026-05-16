@@ -153,7 +153,7 @@ SCENARIO_SCHEMA = {
                         "properties": {
                             "error_type": {
                                 "type": "string",
-                                "enum": ["rate_limit", "authentication", "timeout", "content_filter", "server_error"],
+                                "enum": ["rate_limit", "authentication", "invalid_request", "timeout", "content_filter", "server_error"],
                                 "description": "Type of error to simulate"
                             },
                             "message": {

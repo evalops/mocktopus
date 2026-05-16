@@ -45,3 +45,6 @@ ENV/
 recordings/
 *.jsonl
 test_manual.py
+
+# Bazel
+/bazel-*
