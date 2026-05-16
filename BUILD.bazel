@@ -1,0 +1,30 @@
+load("@pypi//:requirements.bzl", "requirement")
+load("@rules_python//python:defs.bzl", "py_library", "py_test")
+
+RUNTIME_DEPS = [
+    requirement("aiohttp"),
+    requirement("click"),
+    requirement("PyYAML"),
+    requirement("typing-extensions"),
+]
+
+py_library(
+    name = "mocktopus",
+    srcs = glob(["src/mocktopus/**/*.py"]),
+    data = glob(["examples/**/*.yaml"]),
+    imports = ["src"],
+    visibility = ["//visibility:public"],
+    deps = RUNTIME_DEPS,
+)
+
+py_test(
+    name = "pytest",
+    srcs = glob(["tests/**/*.py"]),
+    data = ["pyproject.toml"],
+    main = "tests/pytest_main.py",
+    deps = [
+        ":mocktopus",
+        requirement("pytest"),
+        requirement("pytest-asyncio"),
+    ],
+)
