@@ -7,6 +7,7 @@ Drop-in replacement for OpenAI/Anthropic APIs for deterministic testing.
 from __future__ import annotations
 
 import asyncio
+import fnmatch
 import json
 import logging
 import time
@@ -81,10 +82,6 @@ class MockServer:
         model = data.get("model", "gpt-3.5-turbo")
         messages = data.get("messages", [])
         stream = data.get("stream", False)
-        temperature = data.get("temperature", 1.0)
-        max_tokens = data.get("max_tokens")
-        tools = data.get("tools", [])
-        tool_choice = data.get("tool_choice")
 
         # Mode-specific handling
         if self.mode == ServerMode.MOCK:
@@ -108,10 +105,6 @@ class MockServer:
 
         model = data.get("model", "text-embedding-ada-002")
         input_text = data.get("input", "")
-        encoding_format = data.get("encoding_format", "float")
-        dimensions = data.get("dimensions")
-        user = data.get("user")
-
         # Convert input to list if it's a string
         if isinstance(input_text, str):
             input_texts = [input_text]
@@ -131,8 +124,9 @@ class MockServer:
         elif self.mode == ServerMode.REPLAY:
             return await self._handle_replay_embeddings(data)
 
-    async def _handle_mock_embeddings(self, request: Request, model: str, input_texts: List[str],
-                                     full_request: Dict) -> Response:
+    async def _handle_mock_embeddings(
+        self, request: Request, model: str, input_texts: List[str], full_request: Dict
+    ) -> Response:
         """Handle mocked embeddings responses using scenarios"""
 
         if not self.scenario:
@@ -141,44 +135,47 @@ class MockServer:
                 status=500
             )
 
-        # Try to find a matching rule for embeddings
-        # We'll check for rules that match the embeddings endpoint
         rule = None
         respond_config = None
+        dimensions = full_request.get("dimensions")
+        combined_input = " ".join(input_texts)
 
         for r in self.scenario.rules:
-            # Check if this is an embeddings rule
-            if r.type == "llm.openai" or r.type == "embeddings":
-                # Check endpoint matching (for rules that specify endpoint)
-                if hasattr(r.when, 'endpoint') and r.when.endpoint == "/v1/embeddings":
-                    rule = r
-                    respond_config = r.respond
-                    break
-                # Check model matching for embeddings models
-                elif hasattr(r.when, 'model') and r.when.model:
-                    if (r.when.model == "*" or
-                        r.when.model == model or
-                        (r.when.model.endswith("*") and model.startswith(r.when.model[:-1])) or
-                        "embedding" in r.when.model.lower()):
-                        # Also check if input text matches any criteria
-                        if hasattr(r.when, 'messages_contains'):
-                            combined_input = ' '.join(input_texts).lower()
-                            if r.when.messages_contains.lower() in combined_input:
-                                rule = r
-                                respond_config = r.respond
-                                break
-                        elif hasattr(r.when, 'messages_regex'):
-                            import re
-                            combined_input = ' '.join(input_texts)
-                            if re.search(r.when.messages_regex, combined_input, re.IGNORECASE):
-                                rule = r
-                                respond_config = r.respond
-                                break
-                        else:
-                            # Model matches and no specific input criteria
-                            rule = r
-                            respond_config = r.respond
-                            break
+            if r.type not in ("llm.openai", "embeddings"):
+                continue
+            if not r.ok_to_use():
+                continue
+
+            when = r.when or {}
+            endpoint = when.get("endpoint")
+            model_pattern = when.get("model")
+
+            if endpoint and endpoint != "/v1/embeddings":
+                continue
+            if not endpoint and model_pattern:
+                model_mentions_embeddings = "embedding" in model_pattern.lower()
+                if not (
+                    fnmatch.fnmatch(model, model_pattern)
+                    or model_mentions_embeddings
+                ):
+                    continue
+            elif not endpoint and not model_pattern and r.type != "embeddings":
+                continue
+
+            contains = when.get("messages_contains") or when.get("input_contains")
+            if contains and contains.lower() not in combined_input.lower():
+                continue
+
+            regex = when.get("messages_regex") or when.get("input_regex")
+            if regex:
+                import re
+
+                if not re.search(regex, combined_input, re.IGNORECASE):
+                    continue
+
+            rule = r
+            respond_config = r.respond or {}
+            break
 
         if not rule:
             return web.json_response(
@@ -187,15 +184,14 @@ class MockServer:
             )
 
         # Handle error responses
-        if hasattr(rule, 'error') and rule.error:
+        if rule.error:
             error = rule.error
-            error_type = getattr(error, 'error_type', 'server_error')
-            message = getattr(error, 'message', 'Unknown error')
-            status_code = getattr(error, 'status_code', 500)
+            error_type = error.get("error_type", "server_error")
+            message = error.get("message", "Unknown error")
+            status_code = error.get("status_code", 500)
 
-            # Add delay if specified
-            if hasattr(error, 'delay_ms') and error.delay_ms:
-                await asyncio.sleep(error.delay_ms / 1000.0)
+            if error.get("delay_ms"):
+                await asyncio.sleep(error["delay_ms"] / 1000.0)
 
             return web.json_response(
                 {"error": {"message": message, "type": error_type}},
@@ -207,8 +203,8 @@ class MockServer:
 
         for i, text in enumerate(input_texts):
             # Check if rule specifies embeddings
-            if respond_config and hasattr(respond_config, 'embeddings') and respond_config.embeddings:
-                embeddings_config = respond_config.embeddings
+            if respond_config and respond_config.get("embeddings"):
+                embeddings_config = respond_config["embeddings"]
                 if isinstance(embeddings_config, list) and len(embeddings_config) > i:
                     embedding_vector = embeddings_config[i].get('embedding', [])
                 else:
@@ -244,12 +240,9 @@ class MockServer:
 
         # Calculate token usage
         total_tokens = sum(len(text.split()) for text in input_texts)  # Rough estimate
-        if respond_config and hasattr(respond_config, 'usage'):
-            usage = respond_config.usage
-            if hasattr(usage, 'input_tokens') or (isinstance(usage, dict) and 'input_tokens' in usage):
-                input_tokens = getattr(usage, 'input_tokens', None) if hasattr(usage, 'input_tokens') else usage.get('input_tokens', total_tokens)
-            else:
-                input_tokens = total_tokens
+        usage = respond_config.get("usage") if respond_config else None
+        if isinstance(usage, dict):
+            input_tokens = usage.get("input_tokens", total_tokens)
         else:
             input_tokens = total_tokens
 
@@ -257,7 +250,7 @@ class MockServer:
         self.cost_tracker.track(model, input_tokens, 0)  # Embeddings don't have output tokens
 
         # Consume rule if it has limited uses
-        if rule and hasattr(rule, 'times') and rule.times is not None:
+        if rule and rule.times is not None:
             rule.consume()
 
         response_data = {

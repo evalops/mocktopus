@@ -274,10 +274,46 @@ def validate_scenario_data(data: Dict[str, Any]) -> List[str]:
                     errors.append(f"{rule_path}.error: Must be an object")
                 else:
                     error_obj = rule["error"]
+                    allowed_error_types = {
+                        "rate_limit",
+                        "authentication",
+                        "invalid_request",
+                        "timeout",
+                        "content_filter",
+                        "server_error",
+                    }
                     if "error_type" not in error_obj:
                         errors.append(f"{rule_path}.error.error_type: Required field missing")
+                    elif not isinstance(error_obj["error_type"], str):
+                        errors.append(f"{rule_path}.error.error_type: Must be a string")
+                    elif error_obj["error_type"] not in allowed_error_types:
+                        allowed = "', '".join(sorted(allowed_error_types))
+                        errors.append(
+                            f"{rule_path}.error.error_type: Must be one of '{allowed}'"
+                        )
                     if "message" not in error_obj:
                         errors.append(f"{rule_path}.error.message: Required field missing")
+                    elif not isinstance(error_obj["message"], str):
+                        errors.append(f"{rule_path}.error.message: Must be a string")
+                    if "status_code" in error_obj:
+                        status_code = error_obj["status_code"]
+                        if (
+                            not isinstance(status_code, int)
+                            or status_code < 400
+                            or status_code > 599
+                        ):
+                            errors.append(
+                                f"{rule_path}.error.status_code: Must be an integer from 400 to 599"
+                            )
+                    for field_name in ("retry_after", "delay_ms"):
+                        if field_name in error_obj:
+                            value = error_obj[field_name]
+                            if not isinstance(value, int) or value < 0:
+                                errors.append(
+                                    f"{rule_path}.error.{field_name}: Must be a non-negative integer"
+                                )
+                    if "code" in error_obj and not isinstance(error_obj["code"], str):
+                        errors.append(f"{rule_path}.error.code: Must be a string")
 
             # Validate times if present
             if "times" in rule and rule["times"] is not None:
@@ -297,7 +333,7 @@ class Rule:
 
     type: str  # e.g., "llm.openai"
     when: Dict[str, Any]
-    respond: Dict[str, Any]
+    respond: Dict[str, Any] = field(default_factory=dict)
     times: Optional[int] = None  # None => unlimited
     error: Optional[Dict[str, Any]] = None  # Error response config
     _remaining: Optional[int] = field(default=None, init=False, repr=False)
@@ -425,13 +461,21 @@ class Scenario:
         return cls(rules=rules, meta=meta)
 
     def to_yaml(self) -> str:
+        rules = []
+        for rule in self.rules:
+            rule_data: Dict[str, Any] = {"type": rule.type, "when": rule.when}
+            if rule.respond:
+                rule_data["respond"] = rule.respond
+            if rule.error:
+                rule_data["error"] = rule.error
+            if rule.times is not None:
+                rule_data["times"] = rule.times
+            rules.append(rule_data)
+
         data = {
             "version": 1,
             "meta": self.meta,
-            "rules": [
-                {"type": r.type, "when": r.when, "respond": r.respond, "times": r.times}
-                for r in self.rules
-            ],
+            "rules": rules,
         }
         return yaml.safe_dump(data, sort_keys=False)
 
