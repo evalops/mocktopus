@@ -1,10 +1,6 @@
 """Tests for the Mocktopus server"""
 
-import asyncio
-import json
 import pytest
-from aiohttp import ClientSession
-from aiohttp.web import Application
 
 from mocktopus import Scenario, Rule
 from mocktopus.server import MockServer, ServerMode
@@ -40,8 +36,7 @@ def basic_scenario():
 @pytest.mark.asyncio
 async def test_server_health_endpoint():
     """Test the health check endpoint"""
-    from aiohttp.test_utils import AioHTTPTestCase, make_mocked_request
-    from aiohttp import web
+    from aiohttp.test_utils import make_mocked_request
 
     server = MockServer()
     app = server.create_app()

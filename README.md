@@ -1,51 +1,41 @@
-# 🐙 Mocktopus
+# Mocktopus
 
-> Multi-armed mocks for LLM apps
+Mocktopus is a local, deterministic mock server for LLM application tests. It speaks the
+OpenAI-style chat completions and embeddings endpoints well enough for CI, fixture-based
+integration tests, and local development without live model calls.
 
-**Mocktopus** is a drop-in replacement for OpenAI/Anthropic APIs, designed to make your LLM application tests fast, deterministic, and cost-free.
-
-[![CI](https://github.com/evalops/mocktopus/actions/workflows/ci.yml/badge.svg)](https://github.com/evalops/mocktopus/actions)
+[![CI](https://github.com/evalops/mocktopus/actions/workflows/ci.yml/badge.svg)](https://github.com/evalops/mocktopus/actions/workflows/ci.yml)
+[![Bazel RBE](https://github.com/evalops/mocktopus/actions/workflows/bazel-rbe.yml/badge.svg)](https://github.com/evalops/mocktopus/actions/workflows/bazel-rbe.yml)
 [![PyPI](https://img.shields.io/pypi/v/mocktopus)](https://pypi.org/project/mocktopus/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-## Why Mocktopus?
+## What It Does
 
-Testing LLM applications is challenging:
-- **Non-deterministic**: Same prompt, different responses
-- **Expensive**: Every test run costs API credits
-- **Slow**: API calls add latency to test suites
-- **Network-dependent**: Can't run tests offline
-- **Complex workflows**: Tool calls and streaming complicate testing
+- Serves deterministic chat completion responses from YAML scenarios.
+- Supports OpenAI-style streaming, tool calls, embeddings, and common error responses.
+- Tracks estimated cost savings for mocked requests.
+- Provides a small Python stub client for fast unit tests that do not need an HTTP server.
+- Runs in local pytest, Bazel, and EvalOps Bazel RBE workflows.
 
-Mocktopus solves these problems by providing a local mock server that perfectly mimics LLM APIs.
+Record and replay modes exist as server modes, but the most reliable path today is
+scenario-driven mock mode.
 
-## Features
-
-### 🔄 **Drop-in Replacement**
-Just change your base URL - no code changes required
-
-### 🎯 **Deterministic Testing**
-Same input always produces the same output - perfect for CI/CD
-
-### 🛠️ **Advanced LLM Features**
-- **Tool/function calling** - Full support for complex workflows
-- **Streaming responses** - Server-sent events (SSE) support
-- **Multiple providers** - OpenAI and Anthropic compatible
-
-### ⚡ **Developer Experience**
-- **Zero cost** - No API charges for tests
-- **Fast execution** - No network latency
-- **Offline testing** - Run tests without internet connection
-
-## Installation
+## Install
 
 ```bash
 pip install mocktopus
 ```
 
+For development:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -e ".[dev]"
+```
+
 ## Quick Start
 
-### 1. Create a scenario file (`scenario.yaml`):
+Create `scenario.yaml`:
 
 ```yaml
 version: 1
@@ -55,63 +45,34 @@ rules:
       model: "gpt-4*"
       messages_contains: "hello"
     respond:
-      content: "Hello! How can I help you today?"
+      content: "Hello from Mocktopus."
+      usage:
+        input_tokens: 3
+        output_tokens: 4
 ```
 
-### 2. Start the mock server:
+Start the server:
 
 ```bash
 mocktopus serve -s scenario.yaml
 ```
 
-### 3. Point your app to Mocktopus:
+Point your app at the local OpenAI-compatible base URL:
 
 ```python
 from openai import OpenAI
 
-# Instead of the real API:
-# client = OpenAI(api_key="sk-...")
-
-# Use Mocktopus:
-client = OpenAI(
-    base_url="http://localhost:8080/v1",
-    api_key="mock-key"  # Any string works
-)
-
+client = OpenAI(base_url="http://127.0.0.1:8080/v1", api_key="mock-key")
 response = client.chat.completions.create(
-    model="gpt-4",
-    messages=[{"role": "user", "content": "hello"}]
+    model="gpt-4o-mini",
+    messages=[{"role": "user", "content": "hello"}],
 )
 print(response.choices[0].message.content)
-# Output: "Hello! How can I help you today?"
 ```
 
-## Usage Modes
+## Scenario Rules
 
-### Mock Mode (Default)
-Use predefined YAML scenarios for deterministic responses:
-
-```bash
-mocktopus serve -s examples/chat-basic.yaml
-```
-
-### Record Mode (Coming Soon)
-Proxy and record real API calls for later replay:
-
-```bash
-mocktopus serve --mode record --recordings-dir ./recordings
-```
-
-### Replay Mode (Coming Soon)
-Replay previously recorded API interactions:
-
-```bash
-mocktopus serve --mode replay --recordings-dir ./recordings
-```
-
-## Scenario Examples
-
-### Basic Chat Response
+Rules match in file order. A rule can return either `respond` or `error`.
 
 ```yaml
 version: 1
@@ -120,214 +81,86 @@ rules:
     when:
       messages_contains: "weather"
     respond:
-      content: "It's sunny today!"
-```
+      content: "Sunny, 72F."
 
-### Function Calling
-
-```yaml
-version: 1
-rules:
   - type: llm.openai
     when:
-      messages_contains: "weather"
-    respond:
-      tool_calls:
-        - id: "call_123"
-          type: "function"
-          function:
-            name: "get_weather"
-            arguments: '{"location": "San Francisco"}'
+      messages_contains: "rate limit"
+    error:
+      error_type: rate_limit
+      message: "Rate limit exceeded"
+      status_code: 429
+      retry_after: 60
 ```
 
-### Streaming Response
+Supported match fields:
+
+- `model`: glob pattern such as `gpt-4*`
+- `messages_contains`: substring match against the user message
+- `messages_regex`: regular expression over message text
+- `endpoint`: endpoint selector such as `/v1/embeddings`
+- `times`: maximum uses for the rule before the next matching rule is tried
+
+Supported error types are `rate_limit`, `authentication`, `invalid_request`, `timeout`,
+`content_filter`, and `server_error`.
+
+## Embeddings
+
+Embeddings can be pinned directly in a scenario:
 
 ```yaml
 version: 1
 rules:
-  - type: llm.openai
-    when:
-      model: "*"
-    respond:
-      content: "This will be streamed..."
-      delay_ms: 50  # Delay between chunks
-      chunk_size: 5  # Characters per chunk
-```
-
-### Embeddings API
-
-```yaml
-version: 1
-rules:
-  - type: llm.openai
+  - type: embeddings
     when:
       endpoint: "/v1/embeddings"
     respond:
       embeddings:
-        - embedding: [0.1, 0.2, -0.3, 0.4]  # Mock embedding vectors
-          index: 0
+        - embedding: [0.1, 0.2, -0.3]
       usage:
-        input_tokens: 5
-        total_tokens: 5
+        input_tokens: 7
 ```
 
-### Limited Usage
+If no embedding vector is provided, Mocktopus generates a deterministic vector from the
+input text and model name.
 
-```yaml
-version: 1
-rules:
-  - type: llm.openai
-    when:
-      messages_contains: "test"
-    times: 3  # Only responds 3 times
-    respond:
-      content: "Limited response"
-```
+## CLI
 
-## CLI Commands
-
-### Project Setup
 ```bash
-# Initialize a new project with templates
-mocktopus init                              # Basic template
-mocktopus init --template rag              # RAG/embeddings testing
-mocktopus init --template agents           # Multi-step agent workflows
-mocktopus init --template multimodal       # Image/audio/vision APIs
-mocktopus init --template enterprise       # Advanced error handling
-```
-
-### Start Server
-```bash
-# Basic usage
-mocktopus serve -s scenario.yaml
-
-# Custom port
-mocktopus serve -s scenario.yaml -p 9000
-
-# Verbose logging
-mocktopus serve -s scenario.yaml -v
-```
-
-### Development & Debugging
-```bash
-# Validate scenario files with schema checking
+mocktopus serve -s examples/chat-basic.yaml
+mocktopus serve -s scenario.yaml --port 9000
 mocktopus validate scenario.yaml
-
-# Explain rule matching for debugging
-mocktopus explain -s scenario.yaml --prompt "Hello world"
-mocktopus explain -s scenario.yaml --model gpt-4 --prompt "help me" -v
-
-# Diagnose configuration issues
-mocktopus doctor                            # General environment check
-mocktopus doctor -s scenario.yaml          # Diagnose specific scenario
-mocktopus doctor --fix                      # Auto-fix common issues
+mocktopus explain -s scenario.yaml --prompt "hello"
+mocktopus simulate -s scenario.yaml --prompt "hello"
 ```
 
-### Testing & Examples
+## Tests And Builds
+
+Local checks:
+
 ```bash
-# Simulate requests without starting server
-mocktopus simulate -s scenario.yaml --prompt "Hello"
-
-# Generate example scenarios
-mocktopus example --type basic > my-scenario.yaml
-mocktopus example --type tools > tools-scenario.yaml
+PYTHONPATH=src python3 -m pytest -q
+make bazel-check
 ```
 
-## Testing with Mocktopus
+Remote execution smoke:
 
-### Pytest Integration
-
-```python
-import pytest
-from mocktopus import use_mocktopus
-
-def test_my_llm_app(use_mocktopus):
-    # Load scenario
-    use_mocktopus.load_yaml("tests/scenarios/test.yaml")
-
-    # Get a client
-    client = use_mocktopus.openai_client()
-
-    # Test your app
-    response = client.chat.completions.create(
-        model="gpt-4",
-        messages=[{"role": "user", "content": "test"}]
-    )
-    assert "expected" in response.choices[0].message.content
+```bash
+make bazel-rbe-smoke
 ```
 
-### Continuous Integration
+The `Bazel RBE` GitHub Actions workflow runs on the EvalOps `bazel-rbe-dev` farm when
+`BAZEL_RBE_ENABLED=true` is set for the repository. It uses the `evalops-mocktopus-rbe`
+and `bazel-rbe` self-hosted labels.
 
-```yaml
-# .github/workflows/test.yml
-name: Tests
-on: [push, pull_request]
+## Repository Layout
 
-jobs:
-  test:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-      - run: pip install -e .
-      - run: mocktopus serve -s tests/scenarios.yaml &
-      - run: pytest  # Your tests hit localhost:8080
+```text
+src/mocktopus/
+  cli.py              command-line interface
+  core.py             scenario schema, YAML loading, and rule matching
+  server.py           aiohttp mock API server
+  stub_openai.py      in-process OpenAI-like test client
+tests/                unit and integration coverage
+examples/             scenario examples
 ```
-
-## Advanced Features
-
-### Pattern Matching
-
-Mocktopus supports multiple matching strategies:
-
-- **Exact match**: `messages_contains: "exact phrase"`
-- **Regex**: `messages_regex: "\\d+ items?"`
-- **Glob**: `model: "gpt-4*"`
-
-### Response Configuration
-
-```yaml
-respond:
-  content: "Response text"
-  delay_ms: 100  # Simulate latency
-  usage:
-    input_tokens: 10
-    output_tokens: 20
-  # For streaming
-  chunk_size: 10  # Characters per chunk
-```
-
-## Roadmap
-
-- [x] OpenAI chat completions API
-- [x] Streaming support (SSE)
-- [x] Function/tool calling
-- [x] Anthropic messages API
-- [x] Embeddings API
-- [x] Comprehensive CLI tools
-- [x] JSON schema validation
-- [ ] Recording & replay
-- [ ] Assistants API
-- [ ] Image generation
-- [ ] Semantic similarity matching
-- [ ] Response templating
-- [ ] Load testing mode
-
-## Contributing
-
-We welcome contributions! See our [Contributing Guide](CONTRIBUTING.md) for details.
-
-## License
-
-MIT - See [LICENSE](LICENSE) for details.
-
-## Links
-
-- [GitHub Repository](https://github.com/evalops/mocktopus)
-- [PyPI Package](https://pypi.org/project/mocktopus/)
-- [Documentation](https://github.com/evalops/mocktopus/wiki)
-- [Issue Tracker](https://github.com/evalops/mocktopus/issues)
-
----
-
-Made with 🐙 by [EvalOps](https://github.com/evalops)
